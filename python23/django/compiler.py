@@ -1,13 +1,9 @@
 # MySQL Connector/Python - MySQL driver written in Python.
 
 
-try:
-    from itertools import izip_longest as zip_longest
-except ImportError:
-    # Python 3
-    from itertools import zip_longest
-
+import django
 from django.db.models.sql import compiler
+from django.utils.six.moves import zip_longest
 
 
 class SQLCompiler(compiler.SQLCompiler):
@@ -21,6 +17,14 @@ class SQLCompiler(compiler.SQLCompiler):
                 value = bool(value)
             values.append(value)
         return row[:index_extra_select] + tuple(values)
+
+    def as_subquery_condition(self, alias, columns, qn):
+        # Django 1.6
+        qn2 = self.connection.ops.quote_name
+        sql, params = self.as_sql()
+        column_list = ', '.join(
+            ['%s.%s' % (qn(alias), qn2(column)) for column in columns])
+        return '({0}) IN ({1})'.format(column_list, sql), params
 
 
 class SQLInsertCompiler(compiler.SQLInsertCompiler, SQLCompiler):
@@ -41,3 +45,8 @@ class SQLAggregateCompiler(compiler.SQLAggregateCompiler, SQLCompiler):
 
 class SQLDateCompiler(compiler.SQLDateCompiler, SQLCompiler):
     pass
+
+if django.VERSION >= (1, 6):
+    class SQLDateTimeCompiler(compiler.SQLDateTimeCompiler, SQLCompiler):
+        # Django 1.6
+        pass

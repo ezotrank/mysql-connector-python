@@ -19,6 +19,7 @@ from __future__ import unicode_literals
 
 import sys
 import warnings
+import django
 
 try:
     import mysql.connector
@@ -59,6 +60,7 @@ if settings.DEBUG:
 
 DatabaseError = mysql.connector.DatabaseError
 IntegrityError = mysql.connector.IntegrityError
+NotSupportedError = mysql.connector.NotSupportedError
 
 
 class DjangoMySQLConverter(MySQLConverter):
@@ -160,6 +162,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     requires_explicit_null_ordering_when_grouping = True
     allows_primary_key_0 = False
     uses_savepoints = True
+    atomic_transactions = False
 
     def __init__(self, connection):
         super(DatabaseFeatures, self).__init__(connection)
@@ -208,6 +211,22 @@ class DatabaseFeatures(BaseDatabaseFeatures):
         """
         return self._mysql_storage_engine == 'InnoDB'
 
+    def has_zoneinfo_database(self):
+        """Tests if the time zone definitions are installed
+
+        MySQL accepts full time zones names (eg. Africa/Nairobi) but rejects
+        abbreviations (eg. EAT). When pytz isn't installed and the current
+        time zone is LocalTimezone (the only sensible value in this context),
+        the current time zone name will be an abbreviation. As a consequence,
+        MySQL cannot perform time zone conversions reliably.
+        """
+        # Django 1.6
+        if pytz is None:
+            return False
+
+        self.connection.cmd_query("SELECT 1 FROM mysql.time_zone LIMIT 1")
+        return self.connection.get_rows()[0] is not []
+
 
 class DatabaseOperations(BaseDatabaseOperations):
     compiler_module = "mysql.connector.django.compiler"
@@ -244,6 +263,45 @@ class DatabaseOperations(BaseDatabaseOperations):
             sql = "CAST(DATE_FORMAT({0}, '{1}') AS DATETIME)".format(
                 field_name, format_str)
         return sql
+
+    def datetime_extract_sql(self, lookup_type, field_name, tzname):
+        # Django 1.6
+        if settings.USE_TZ:
+            field_name = "CONVERT_TZ({0}, 'UTC', %s)".format(field_name)
+            params = [tzname]
+        else:
+            params = []
+
+        # http://dev.mysql.com/doc/mysql/en/date-and-time-functions.html
+        if lookup_type == 'week_day':
+            # DAYOFWEEK() returns an integer, 1-7, Sunday=1.
+            # Note: WEEKDAY() returns 0-6, Monday=0.
+            sql = "DAYOFWEEK({0})".format(field_name)
+        else:
+            sql = "EXTRACT({0} FROM {1})".format(lookup_type.upper(),
+                                                 field_name)
+        return sql, params
+
+    def datetime_trunc_sql(self, lookup_type, field_name, tzname):
+        # Django 1.6
+        if settings.USE_TZ:
+            field_name = "CONVERT_TZ({0}, 'UTC', %s)".format(field_name)
+            params = [tzname]
+        else:
+            params = []
+        fields = ['year', 'month', 'day', 'hour', 'minute', 'second']
+        format_ = ('%%Y-', '%%m', '-%%d', ' %%H:', '%%i', ':%%s')
+        format_def = ('0000-', '01', '-01', ' 00:', '00', ':00')
+        try:
+            i = fields.index(lookup_type) + 1
+        except ValueError:
+            sql = field_name
+        else:
+            format_str = ''.join([f for f in format_[:i]] +
+                                 [f for f in format_def[i:]])
+            sql = "CAST(DATE_FORMAT({0}, '{1}') AS DATETIME)".format(
+                field_name, format_str)
+        return sql, params
 
     def date_interval_sql(self, sql, connector, timedelta):
         """Returns SQL for calculating date/time intervals
@@ -289,10 +347,7 @@ class DatabaseOperations(BaseDatabaseOperations):
     def random_function_sql(self):
         return 'RAND()'
 
-    def sql_flush(self, style, tables, sequences):
-        # NB: The generated SQL below is specific to MySQL
-        # 'TRUNCATE x;', 'TRUNCATE y;', 'TRUNCATE z;'... style SQL statements
-        # to clear all tables of all data
+    def sql_flush(self, style, tables, sequences, allow_cascade=False):
         if tables:
             sql = ['SET FOREIGN_KEY_CHECKS = 0;']
             for table in tables:
@@ -359,6 +414,17 @@ class DatabaseOperations(BaseDatabaseOperations):
         second = '{0}-12-31 23:59:59.999999'
         return [first.format(value), second.format(value)]
 
+    def year_lookup_bounds_for_datetime_field(self, value):
+        # Django 1.6
+        # Again, no microseconds
+        first, second = super(DatabaseOperations,
+            self).year_lookup_bounds_for_datetime_field(value)
+        if self.connection.get_server_version() >= (5, 6, 4):
+            return [first.replace(microsecond=0), second]
+        else:
+            return [first.replace(microsecond=0),
+                second.replace(microsecond=0)]
+
     def max_name_length(self):
         return 64
 
@@ -395,6 +461,8 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         'iendswith': 'LIKE %s',
     }
 
+    Database = mysql.connector
+
     def __init__(self, *args, **kwargs):
         super(DatabaseWrapper, self).__init__(*args, **kwargs)
         self.server_version = None
@@ -414,8 +482,8 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             return self.connection.is_connected()
         return False
 
-    def _connect(self):
-        """Setup the connection with MySQL"""
+    def get_connection_params(self):
+        # Django 1.6
         kwargs = {
             'charset': 'utf8',
             'use_unicode': True,
@@ -443,24 +511,48 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             mysql.connector.constants.ClientFlag.FOUND_ROWS,
         ]
         kwargs.update(settings_dict['OPTIONS'])
-        self.connection = mysql.connector.connect(**kwargs)
-        self.server_version = self.connection.get_server_version()
-        self.connection.set_converter_class(DjangoMySQLConverter)
+
+        return kwargs
+
+    def get_new_connection(self, conn_params):
+        # Django 1.6
+        cnx = mysql.connector.connect(**conn_params)
+        self.server_version = cnx.get_server_version()
+        cnx.set_converter_class(DjangoMySQLConverter)
         connection_created.send(sender=self.__class__, connection=self)
 
+        return cnx
+
+    def init_connection_state(self):
+        # Django 1.6
         if self.server_version < (5, 5, 3):
-            # http://dev.mysql.com/doc/refman/5.6/en/server-system-variables.html#sysvar_sql_auto_is_null
+            # See sysvar_sql_auto_is_null in MySQL Reference manual
             self.connection.cmd_query("SET SQL_AUTO_IS_NULL = 0")
+        if self.settings_dict['AUTOCOMMIT']:
+            self.set_autocommit(self.settings_dict['AUTOCOMMIT'])
+
+    def create_cursor(self):
+        # Django 1.6
+        cursor = self.connection.cursor()
+        return CursorWrapper(cursor)
+
+    def _connect(self):
+        """Setup the connection with MySQL"""
+        self.connection = self.get_new_connection(self.get_connection_params())
+        self.init_connection_state()
 
     def _cursor(self):
         """Return a CursorWrapper object
 
         Returns a CursorWrapper
         """
-        if not self._valid_connection():
-            self._connect()
-
-        return CursorWrapper(self.connection.cursor())
+        try:
+            # Django 1.6
+            return super(DatabaseWrapper, self)._cursor()
+        except AttributeError:
+            if not self.connection:
+                self._connect()
+            return self.create_cursor()
 
     def get_server_version(self):
         """Returns the MySQL server version of current connection
@@ -486,7 +578,15 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
         Re-enable foreign key checks after they have been disabled.
         """
-        self.cursor().execute('SET @@session.foreign_key_checks = 1')
+        # Override needs_rollback in case constraint_checks_disabled is
+        # nested inside transaction.atomic.
+        if django.VERSION >= (1, 6):
+            self.needs_rollback, needs_rollback = False, self.needs_rollback
+        try:
+            self.cursor().execute('SET @@session.foreign_key_checks = 1')
+        finally:
+            if django.VERSION >= (1, 6):
+                self.needs_rollback = needs_rollback
 
     def check_constraints(self, table_names=None):
         """Check rows in tables for invalid foreign key references
@@ -537,3 +637,17 @@ class DatabaseWrapper(BaseDatabaseWrapper):
                                              bad_row[1], referenced_table_name,
                                              referenced_column_name))
                     raise utils.IntegrityError(msg)
+
+    def _rollback(self):
+        try:
+            BaseDatabaseWrapper._rollback(self)
+        except NotSupportedError:
+            pass
+
+    def _set_autocommit(self, autocommit):
+        # Django 1.6
+        self.connection.autocommit = autocommit
+
+    def is_usable(self):
+        # Django 1.6
+        return self.connection.is_connected()

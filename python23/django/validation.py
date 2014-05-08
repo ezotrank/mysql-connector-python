@@ -1,6 +1,7 @@
 # MySQL Connector/Python - MySQL driver written in Python.
 
 
+from django.db import models
 from django.db.backends import BaseDatabaseValidation
 
 
@@ -11,7 +12,6 @@ class DatabaseValidation(BaseDatabaseValidation):
         No character (varchar) fields can have a length exceeding 255
         characters if they have a unique index on them.
         """
-        from django.db import models
         varchar_fields = (models.CharField, models.CommaSeparatedIntegerField,
                           models.SlugField)
         if isinstance(f, varchar_fields) and f.max_length > 255 and f.unique:

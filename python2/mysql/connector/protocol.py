@@ -165,7 +165,7 @@ class MySQLProtocol(object):
         try:
             return utils.read_lc_int(packet[4:])[1]
         except (struct.error, ValueError):
-            raise InterfaceError("Failed parsing column count")
+            raise errors.InterfaceError("Failed parsing column count")
 
     def parse_column(self, packet):
         """Parse a MySQL column-packet"""

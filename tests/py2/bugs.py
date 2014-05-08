@@ -139,3 +139,10 @@ class BugOra17079344Extra(object):
     data_gbk = [u'赵孟頫', u'赵\孟\頫\\', u'遜',]
     data_sjis = [u'\u005c']
     data_big5 = [u'\u5C62']
+
+
+class BugOra17780576Extra(object):
+
+    """Extras for test case test_bugs.BugOra17780576"""
+
+    data_utf8mb4 = [u'😉😍', u'😃😊', u'😄😘😚',]

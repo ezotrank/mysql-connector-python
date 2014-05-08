@@ -1,5 +1,5 @@
 # MySQL Connector/Python - MySQL driver written in Python.
-# Copyright (c) 2009, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2009, 2014, Oracle and/or its affiliates. All rights reserved.
 
 # MySQL Connector/Python is licensed under the terms of the GPLv2
 # <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most
@@ -986,6 +986,23 @@ class MySQLConnection(object):
         return CharacterSet.get_info(self._charset_id)[0]
 
     @property
+    def python_charset(self):
+        """Returns the Python character set for current connection
+
+        This property returns the character set name of the current connection.
+        Note that, unlike property charset, this checks if the previously set
+        character set is supported by Python and if not, it returns the
+        equivalent character set that Python supports.
+
+        Returns a string.
+        """
+        encoding = CharacterSet.get_info(self._charset_id)[0]
+        if encoding == 'utf8mb4':
+            return 'utf8'
+        else:
+            return encoding
+
+    @property
     def collation(self):
         """Returns the collation for current connection
 
@@ -1238,13 +1255,14 @@ class MySQLConnection(object):
         return (types[cursor_type])(self)
 
     def start_transaction(self, consistent_snapshot=False,
-                          isolation_level=None):
+                          isolation_level=None, readonly=None):
         """Start a transaction
 
         This method explicitly starts a transaction sending the
         START TRANSACTION statement to the MySQL server. You can optionally
-        set whether there should be a consistent snapshot or which
-        isolation level you need.
+        set whether there should be a consistent snapshot, which
+        isolation level you need or which access mode i.e. READ ONLY or
+        READ WRITE.
 
         For example, to start a transaction with isolation level SERIALIZABLE,
         you would do the following:
@@ -1269,6 +1287,19 @@ class MySQLConnection(object):
 
             self._execute_query(
                 "SET TRANSACTION ISOLATION LEVEL {0}".format(level))
+
+        if readonly is not None:
+            if self._server_version < (5, 6, 5):
+                raise ValueError(
+                    "MySQL server version {0} does not support "
+                    "this feature".format(self._server_version))
+
+            if readonly:
+                access_mode = 'READ ONLY'
+            else:
+                access_mode = 'READ WRITE'
+            self._execute_query(
+                "SET TRANSACTION {0}".format(access_mode))
 
         query = "START TRANSACTION"
         if consistent_snapshot:

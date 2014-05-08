@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # MySQL Connector/Python - MySQL driver written in Python.
-# Copyright (c) 2009, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2009, 2014, Oracle and/or its affiliates. All rights reserved.
 
 # MySQL Connector/Python is licensed under the terms of the GPLv2
 # <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most
@@ -1932,3 +1932,158 @@ class BugOra17079344(tests.MySQLConnectorTests):
     def test_big5(self):
         self._test_charset('big5', BugOra17079344Extra.data_big5)
 
+
+class BugOra17780576(tests.MySQLConnectorTests):
+    """BUG#17780576: CHARACTER SET 'UTF8MB4' UNSUPPORTED
+    """
+    def tearDown(self):
+        cnx = connection.MySQLConnection(**tests.get_mysql_config())
+        cur = cnx.cursor()
+        cur.execute("DROP TABLE IF EXISTS utf8mb4test")
+        cur.close()
+        cnx.close()
+
+    def test_utf8mb4(self):
+        if tests.MYSQL_VERSION < (5, 5, 0):
+            # Test only valid for MySQL 5.5.0 and later.
+            return
+
+        config = tests.get_mysql_config()
+        cnx = connection.MySQLConnection(**config)
+        tablename = 'utf8mb4test'
+        cnx.set_charset_collation('utf8mb4')
+        cur = cnx.cursor()
+        cur.execute("DROP TABLE IF EXISTS {0}".format(tablename))
+
+        table = (
+            "CREATE TABLE {table} ("
+            "id INT AUTO_INCREMENT KEY, "
+            "c1 VARCHAR(40) CHARACTER SET 'utf8mb4'"
+            ") CHARACTER SET 'utf8mb4'"
+        ).format(table=tablename)
+        cur.execute(table)
+
+        insert = "INSERT INTO {0} (c1) VALUES (%s)".format(tablename)
+        data = BugOra17780576Extra.data_utf8mb4
+        for value in data:
+            cur.execute(insert, (value,))
+
+        cur.execute("SELECT id, c1 FROM {0} ORDER BY id".format(tablename))
+        for row in cur:
+            self.assertEqual(data[row[0]-1], row[1])
+
+        cur.close()
+        cnx.close()
+
+
+class BugOra17573172(tests.MySQLConnectorTests):
+    """BUG#17573172: MISSING SUPPORT FOR READ-ONLY TRANSACTIONS
+    """
+    def setUp(self):
+        config = tests.get_mysql_config()
+        self.cnx = connection.MySQLConnection(**config)
+        self.cur = self.cnx.cursor()
+        self.cur.execute("DROP TABLE IF EXISTS BugOra17573172")
+        self.cur.execute("CREATE TABLE BugOra17573172 (c1 INT, c2 INT)")
+        self.cur.executemany("INSERT INTO BugOra17573172 VALUES (%s, %s)",
+                             [(1, 10), (2, 20), (3, 30)])
+        self.cnx.commit()
+
+    def test_read_only(self):
+        if self.cnx.get_server_version() < (5, 6, 5):
+             self.assertRaises(ValueError, self.cnx.start_transaction,
+                               readonly=True)
+        else:
+            self.cnx.start_transaction(readonly=True)
+            self.assertTrue(self.cnx.in_transaction)
+            self.assertRaises(errors.ProgrammingError,
+                              self.cnx.start_transaction)
+
+            query = "INSERT INTO BugOra17573172 VALUES(4, 40)"
+            self.assertRaises(errors.ProgrammingError, self.cur.execute, query)
+            self.cnx.rollback()
+
+    def tearDown(self):
+        self.cur.execute("DROP TABLE IF EXISTS BugOra17573172")
+        self.cur.close()
+
+
+class BugOra17826833(tests.MySQLConnectorTests):
+    """BUG#17826833: EXECUTEMANY() FOR INSERTS W/O VALUES
+    """
+    def setUp(self):
+        config = tests.get_mysql_config()
+        self.cnx = connection.MySQLConnection(**config)
+        self.cursor = self.cnx.cursor()
+
+        self.emp_tbl = 'Bug17826833_emp'
+        self.cursor.execute("DROP TABLE IF EXISTS %s" % (self.emp_tbl))
+
+        self.city_tbl = 'Bug17826833_city'
+        self.cursor.execute("DROP TABLE IF EXISTS %s" % (self.city_tbl))
+
+        create = ("CREATE TABLE %s ( "
+                  "`id` int(11) NOT NULL, "
+                  "`name` varchar(20) NOT NULL , "
+                  "`phone` varchar(20), "
+                  "PRIMARY KEY (`id`))" % (self.emp_tbl))
+        self.cursor.execute(create)
+
+        create = ("CREATE TABLE %s ( "
+                  "`id` int(11) NOT NULL, "
+                  "`name` varchar(20) NOT NULL, "
+                  "PRIMARY KEY (`id`))" % (self.city_tbl))
+        self.cursor.execute(create)
+
+    def test_executemany(self):
+        stmt = "INSERT INTO {0} (id,name) VALUES (%s,%s)".format(
+               self.city_tbl)
+        self.cursor.executemany(stmt, [(1, 'ABC'), (2, 'CDE'), (3, 'XYZ')])
+
+        query = ("INSERT INTO %s (id, name, phone)"
+                 "SELECT id,name,%%s FROM %s WHERE name=%%s") % (self.emp_tbl,
+                 self.city_tbl)
+        try:
+            self.cursor.executemany(query, [('4567', 'CDE'), ('1234', 'XYZ')])
+            stmt = "SELECT * FROM {0}".format(self.emp_tbl)
+            self.cursor.execute(stmt)
+            self.assertEqual([(2, 'CDE', '4567'), (3, 'XYZ', '1234')],
+                        self.cursor.fetchall(), "INSERT ... SELECT failed")
+        except errors.ProgrammingError as err:
+            self.fail("Regular expression fails with executemany(): %s" %
+                      err)
+
+
+class BugOra18040042(tests.MySQLConnectorTests):
+    """BUG#18040042: Reset session closing pooled Connection"""
+    def test_clear_session(self):
+        cnxpool = pooling.MySQLConnectionPool(
+            pool_name='test', pool_size=1, **tests.get_mysql_config())
+
+        pcnx = cnxpool.get_connection()
+        exp_session_id = pcnx.connection_id
+        pcnx.cmd_query("SET @ham = 2")
+        pcnx.close()
+
+        pcnx = cnxpool.get_connection()
+        pcnx.cmd_query("SELECT @ham")
+        self.assertEqual(exp_session_id, pcnx.connection_id)
+        self.assertNotEqual(('2',), pcnx.get_rows()[0][0])
+
+    def test_do_not_clear_session(self):
+        cnxpool = pooling.MySQLConnectionPool(
+            pool_name='test', pool_size=1, pool_reset_session=False,
+            **tests.get_mysql_config())
+
+        pcnx = cnxpool.get_connection()
+        exp_session_id = pcnx.connection_id
+        pcnx.cmd_query("SET @ham = 2")
+        pcnx.close()
+
+        pcnx = cnxpool.get_connection()
+        pcnx.cmd_query("SELECT @ham")
+        self.assertEqual(exp_session_id, pcnx.connection_id)
+        if sys.version_info[0] == 2:
+            self.assertEqual(('2',), pcnx.get_rows()[0][0])
+        else:
+            self.assertEqual((b'2',), pcnx.get_rows()[0][0])

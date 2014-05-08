@@ -1,5 +1,5 @@
 # MySQL Connector/Python - MySQL driver written in Python.
-# Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2013, 2014, Oracle and/or its affiliates. All rights reserved.
 
 # MySQL Connector/Python is licensed under the terms of the GPLv2
 # <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most
@@ -104,7 +104,13 @@ class PooledMySQLConnection(object):
         MySQL server. The connection is added back to the pool so it
         can be reused.
         """
-        self._cnx_pool.add_connection(self._cnx)
+        cnx = self._cnx
+        if self._cnx_pool.reset_session:
+            # pylint: disable=W0212
+            cnx.cmd_change_user(cnx._user, cnx._password, cnx._database,
+                                cnx._charset_id)
+            # pylint: enable=W0212
+        self._cnx_pool.add_connection(cnx)
         self._cnx = None
 
     def config(self, **kwargs):
@@ -123,7 +129,8 @@ class PooledMySQLConnection(object):
 class MySQLConnectionPool(object):
     """Class defining a pool of MySQL connections
     """
-    def __init__(self, pool_size=5, pool_name=None, **kwargs):
+    def __init__(self, pool_size=5, pool_name=None, pool_reset_session=True,
+                 **kwargs):
         """Initialize
 
         Initialize a MySQL connection pool with a maximum number of
@@ -133,6 +140,7 @@ class MySQLConnectionPool(object):
         """
         self._pool_size = None
         self._pool_name = None
+        self._reset_session = pool_reset_session
         self._set_pool_size(pool_size)
         self._set_pool_name(pool_name or generate_pool_name(**kwargs))
         self._cnx_config = {}
@@ -155,6 +163,11 @@ class MySQLConnectionPool(object):
     def pool_size(self):
         """Return number of connections managed by the pool"""
         return self._pool_size
+
+    @property
+    def reset_session(self):
+        """Return whether to reset session"""
+        return self._reset_session
 
     def _set_pool_size(self, pool_size):
         """Set the size of the pool

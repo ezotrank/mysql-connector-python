@@ -1,5 +1,5 @@
 # MySQL Connector/Python - MySQL driver written in Python.
-# Copyright (c) 2009, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2009, 2014, Oracle and/or its affiliates. All rights reserved.
 
 # MySQL Connector/Python is licensed under the terms of the GPLv2
 # <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most
@@ -31,10 +31,18 @@ import itertools
 
 from mysql.connector import errors
 
-RE_SQL_COMMENT = re.compile(r"\/\*.*\*\/")
-RE_SQL_ON_DUPLICATE = re.compile(r'\s*ON DUPLICATE KEY.*$')
+SQL_COMMENT = r"\/\*.*?\*\/"
+RE_SQL_COMMENT = re.compile(
+    r'''({0})|(["'`][^"'`]*?({0})[^"'`]*?["'`])'''.format(SQL_COMMENT),
+    re.I | re.M | re.S)
+RE_SQL_ON_DUPLICATE = re.compile(
+    r'''\s*ON\s+DUPLICATE\s+KEY(?:[^"'`]*["'`][^"'`]*["'`])*[^"'`]*$''',
+    re.I | re.M | re.S)
+RE_SQL_INSERT_STMT = re.compile(
+    r"({0}|\s)*INSERT({0}|\s)*INTO.+VALUES.*".format(SQL_COMMENT),
+    re.I | re.M | re.S)
 RE_SQL_INSERT_VALUES = re.compile(r'.*VALUES\s*(\(.*\)).*', re.I | re.M | re.S)
-RE_SQL_INSERT_STMT = re.compile(r'INSERT\s+INTO', re.I)
+
 RE_SQL_SPLIT_STMTS = re.compile(
     r''';(?=(?:[^"'`]*["'`][^"'`]*["'`])*[^"'`]*$)''')
 RE_SQL_FIND_PARAM = re.compile(
@@ -460,7 +468,7 @@ class MySQLCursor(CursorBase):
 
         try:
             if isinstance(operation, unicode):
-                operation = operation.encode(self._connection.charset)
+                operation = operation.encode(self._connection.python_charset)
         except (UnicodeDecodeError, UnicodeEncodeError) as err:
             raise errors.ProgrammingError(str(err))
 
@@ -510,6 +518,18 @@ class MySQLCursor(CursorBase):
         Results are discarded. If they are needed, consider looping over
         data using the execute() method.
         """
+        def remove_comments(match):
+            """Remove comments from INSERT statements.
+
+            This function is used while removing comments from INSERT
+            statements. If the matched string is a comment not enclosed
+            by quotes, it returns an empty string, else the string itself.
+            """
+            if match.group(1):
+                return ""
+            else:
+                return match.group(2)
+
         if not operation:
             return
         if self._have_unread_result():
@@ -524,7 +544,7 @@ class MySQLCursor(CursorBase):
                 self._rowcount = 0
                 return
             tmp = re.sub(RE_SQL_ON_DUPLICATE, '',
-                         re.sub(RE_SQL_COMMENT, '', operation))
+                         re.sub(RE_SQL_COMMENT, remove_comments, operation))
             matches = re.search(RE_SQL_INSERT_VALUES, tmp)
             if not matches:
                 raise errors.InterfaceError(
@@ -535,9 +555,11 @@ class MySQLCursor(CursorBase):
             values = []
             for params in seq_params:
                 values.append(fmt % self._process_params(params))
-            operation = operation.replace(matches.group(1),
-                                          ','.join(values), 1)
-            return self.execute(operation)
+
+            if matches.group(1) in operation:
+                operation = operation.replace(matches.group(1),
+                                              ','.join(values), 1)
+                return self.execute(operation)
 
         rowcnt = 0
         try:

@@ -1,5 +1,5 @@
 # MySQL Connector/Python - MySQL driver written in Python.
-# Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2013, 2014, Oracle and/or its affiliates. All rights reserved.
 
 # MySQL Connector/Python is licensed under the terms of the GPLv2
 # <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most
@@ -108,7 +108,8 @@ class PooledMySQLConnectionTests(tests.MySQLConnectorTests):
         cnxpool.add_connection = dummy_add_connection.__get__(
             cnxpool, pooling.MySQLConnectionPool)
 
-        pcnx = pooling.PooledMySQLConnection(cnxpool, MySQLConnection())
+        pcnx = pooling.PooledMySQLConnection(cnxpool,
+                                             MySQLConnection(**dbconfig))
 
         cnx = pcnx._cnx
         pcnx.close()
@@ -144,6 +145,7 @@ class MySQLConnectionPoolTests(tests.MySQLConnectorTests):
         self.assertEqual({}, cnxpool._cnx_config)
         self.assertTrue(isinstance(cnxpool._cnx_queue, Queue))
         self.assertTrue(isinstance(cnxpool._config_version, uuid.UUID))
+        self.assertTrue(True, cnxpool._reset_session)
 
         cnxpool = pooling.MySQLConnectionPool(pool_size=10, pool_name='test')
         self.assertEqual(10, cnxpool._pool_size)
@@ -154,6 +156,10 @@ class MySQLConnectionPoolTests(tests.MySQLConnectorTests):
         self.assertEqual(10, cnxpool._cnx_queue.qsize())
         self.assertTrue(isinstance(cnxpool._config_version, uuid.UUID))
 
+        cnxpool = pooling.MySQLConnectionPool(pool_size=1, pool_name='test',
+                                              pool_reset_session=False)
+        self.assertFalse(cnxpool._reset_session)
+
     def test_pool_name(self):
         """Test MySQLConnectionPool.pool_name property"""
         pool_name = 'ham'
@@ -161,11 +167,19 @@ class MySQLConnectionPoolTests(tests.MySQLConnectorTests):
         self.assertEqual(pool_name, cnxpool.pool_name)
 
     def test_pool_size(self):
-        """Test MySQLConnectionPool.pool_name property"""
+        """Test MySQLConnectionPool.pool_size property"""
         pool_size = 4
         cnxpool = pooling.MySQLConnectionPool(pool_name='test',
                                               pool_size=pool_size)
         self.assertEqual(pool_size, cnxpool.pool_size)
+
+    def test_reset_session(self):
+        """Test MySQLConnectionPool.reset_session property"""
+        cnxpool = pooling.MySQLConnectionPool(pool_name='test',
+                                              pool_reset_session=False)
+        self.assertFalse(cnxpool.reset_session)
+        cnxpool._reset_session = True
+        self.assertTrue(cnxpool.reset_session)
 
     def test__set_pool_size(self):
         cnxpool = pooling.MySQLConnectionPool(pool_name='test')

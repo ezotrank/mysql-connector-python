@@ -45,7 +45,7 @@ except ImportError as err:
 _CURRENT_PATH = os.path.abspath(os.path.dirname(__file__))
 (_BASE_PATH, _,) = os.path.split(_CURRENT_PATH)
 PYLINTRC = os.path.join(_CURRENT_PATH, '..', 'support', 'style', 'pylint.rc')
-IGNORE_LIST = ['dbapi.py', 'client_error.py', 'errorcode.py']
+IGNORE_LIST = ['dbapi.py', 'client_error.py', 'errorcode.py', 'charsets.py']
 
 
 @unittest.skipIf(not os.path.exists(PYLINTRC), "pylint.rc not available")

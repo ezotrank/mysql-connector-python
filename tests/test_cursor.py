@@ -1,4 +1,4 @@
-# Copyright (c) 2009, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2009, 2014, Oracle and/or its affiliates. All rights reserved.
 
 # MySQL Connector/Python is licensed under the terms of the GPLv2
 # <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most
@@ -83,7 +83,10 @@ class CursorModule(tests.MySQLConnectorTests):
              "\n(\n%(c1)s\n, \n%(c2)s, REPEAT('a', 20)\n)"),
             ("(  %(c1)s  ,NOW(),REPEAT('a', 20)\n),  %(c2)s  )",
              "INSERT INTO t1 VALUES "
-             "  (  %(c1)s  ,NOW(),REPEAT('a', 20)\n),  %(c2)s  ) ON DUPLICATE"),
+             " (  %(c1)s  ,NOW(),REPEAT('a', 20)\n),  %(c2)s  ) ON DUPLICATE"),
+            ("(  %(c1)s, %(c2)s  )",
+             "INSERT INTO `values` VALUES "
+             "  (  %(c1)s, %(c2)s  ) ON DUPLICATE"),
         ]
 
         for exp, stmt in cases:

@@ -2,8 +2,12 @@
 
 
 import re
-
+import django
 from django.db.backends import BaseDatabaseIntrospection
+
+if django.VERSION >= (1, 6):
+    from django.db.backends import FieldInfo
+    from django.utils.encoding import force_text
 
 from mysql.connector.constants import FieldType
 
@@ -25,6 +29,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         FieldType.LONGLONG: 'BigIntegerField',
         FieldType.SHORT: 'IntegerField',
         FieldType.STRING: 'CharField',
+        FieldType.TIME: 'TimeField',
         FieldType.TIMESTAMP: 'DateTimeField',
         FieldType.TINY: 'IntegerField',
         FieldType.TINY_BLOB: 'TextField',
@@ -46,17 +51,33 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         # varchar length returned by cursor.description is an internal length,
         # not visible length (#5725), use information_schema database to fix
         # this
-        cursor.execute("""
-            SELECT column_name, character_maximum_length
-            FROM information_schema.columns
-            WHERE table_name = %s AND table_schema = DATABASE()
-                AND character_maximum_length IS NOT NULL""", [table_name])
+        cursor.execute(
+            "SELECT column_name, character_maximum_length "
+            "FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE table_name = %s AND table_schema = DATABASE() "
+            "AND character_maximum_length IS NOT NULL", [table_name])
         length_map = dict(cursor.fetchall())
 
-        cursor.execute("SELECT * FROM {0} LIMIT 1"
-                       "".format(self.connection.ops.quote_name(table_name)))
-        return [line[:3] + (length_map.get(line[0], line[3]),) + line[4:]
-            for line in cursor.description]
+        # Also getting precision and scale from information_schema (see #5014)
+        cursor.execute(
+            "SELECT column_name, numeric_precision, numeric_scale FROM "
+            "INFORMATION_SCHEMA.COLUMNS WHERE table_name = %s AND "
+            "table_schema = DATABASE() AND data_type='decimal", [table_name])
+        numeric_map = dict([(line[0], tuple([int(n) for n in line[1:]]))
+            for line in cursor.fetchall()])
+
+        cursor.execute("SELECT * FROM {0} LIMIT 1".format(
+                        self.connection.ops.quote_name(table_name)))
+        if django.VERSION >= (1, 6):
+            return [FieldInfo(*((force_text(line[0]),)
+                                + line[1:3]
+                                + (length_map.get(line[0], line[3]),)
+                                + numeric_map.get(line[0], line[4:6])
+                                + (line[6],)))
+                for line in cursor.description]
+        else:
+            return [line[:3] + (length_map.get(line[0], line[3]),) + line[4:]
+                for line in cursor.description]
 
     def _name_to_index(self, cursor, table_name):
         """
@@ -121,6 +142,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         """
         Returns the name of the primary key column for the given table
         """
+        # Django 1.6
         for column in self.get_indexes(cursor, table_name).iteritems():
             if column[1]['primary_key']:
                 return column[0]

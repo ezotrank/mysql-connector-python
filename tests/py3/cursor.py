@@ -1,5 +1,5 @@
 # MySQL Connector/Python - MySQL driver written in Python.
-# Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2013, 2014, Oracle and/or its affiliates. All rights reserved.
 
 # MySQL Connector/Python is licensed under the terms of the GPLv2
 # <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most
@@ -392,7 +392,7 @@ class MySQLCursorTests(tests.TestsCursor):
                           'foo', ['foo'])
         self.assertRaises(errors.ProgrammingError, self.cur.executemany,
                           'SELECT %s', [('foo',), 'foo'])
-        self.assertRaises(errors.InterfaceError,
+        self.assertRaises(errors.ProgrammingError,
                           self.cur.executemany,
                           "INSERT INTO t1 1 %s", [(1,), (2,)])
 
@@ -427,6 +427,37 @@ class MySQLCursorTests(tests.TestsCursor):
         self.cur.executemany(stmt, data)
         self.assertEqual(2, self.cur.rowcount)
 
+        stmt = "TRUNCATE TABLE {0}".format(tbl)
+        self.cur.execute(stmt)
+
+        stmt = (
+            "/*comment*/INSERT/*comment*/INTO/*comment*/{0}(col1,col2)VALUES"
+            "/*comment*/(%s,%s/*comment*/)/*comment()*/ON DUPLICATE KEY UPDATE"
+            " col1 = VALUES(col1)"
+        ).format(tbl)
+
+        self.cur.executemany(stmt, [(4, 100), (5, 200), (6, 300)])
+        self.assertEqual(3, self.cur.rowcount)
+
+        self.cur.execute(stmt_select)
+        self.assertEqual([(4, '100'), (5, '200'), (6, '300')],
+                         self.cur.fetchall(), "Multi insert test failed")
+
+        stmt = "TRUNCATE TABLE {0}".format(tbl)
+        self.cur.execute(stmt)
+
+        stmt = (
+            "INSERT INTO/*comment*/{0}(col1,col2)VALUES"
+            "/*comment*/(%s,'/*100*/')/*comment()*/ON DUPLICATE KEY UPDATE "
+            "col1 = VALUES(col1)"
+        ).format(tbl)
+
+        self.cur.executemany(stmt, [(4,), (5,)])
+        self.assertEqual(2, self.cur.rowcount)
+
+        self.cur.execute(stmt_select)
+        self.assertEqual([(4, '/*100*/'), (5, '/*100*/')],
+                         self.cur.fetchall(), "Multi insert test failed")
         self._test_execute_cleanup(self.cnx, tbl)
         self.cur.close()
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # MySQL Connector/Python - MySQL driver written in Python.
-# Copyright (c) 2009, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2009, 2014, Oracle and/or its affiliates. All rights reserved.
 
 # MySQL Connector/Python is licensed under the terms of the GPLv2
 # <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most
@@ -64,6 +64,7 @@ import logging
 try:
     from argparse import ArgumentParser
 except:
+    # Python v2.6
     from optparse import OptionParser
 
 try:
@@ -273,10 +274,10 @@ _UNITTESTS_CMD_ARGS = {
 }
 
 
-def _get_arg_options():
+def _get_arg_parser():
     """Parse comand line ArgumentParser
 
-    This function parses the command line arguments and returns the options.
+    This function parses the command line arguments and returns the parser.
 
     It works with both optparse and argparse where available.
     """
@@ -303,13 +304,7 @@ def _get_arg_options():
             flags = [i for i in flags if i]
         add(*flags, **_clean_optparse(params))
 
-    options = parser.parse_args()
-
-    if isinstance(options, tuple):
-        # Fallback to old optparse
-        return options[0]
-
-    return options
+    return parser
 
 
 def _show_help(msg=None, parser=None, exit_code=0):
@@ -320,7 +315,7 @@ def _show_help(msg=None, parser=None, exit_code=0):
     tests.printmsg(msg)
     if parser is not None:
         parser.print_help()
-    if exit > -1:
+    if exit_code > -1:
         sys.exit(exit_code)
 
 
@@ -629,7 +624,12 @@ def setup_logger(logger, debug=False, logfile=None):
 
 
 def main():
-    options = _get_arg_options()
+    parser = _get_arg_parser()
+    options = parser.parse_args()
+
+    if isinstance(options, tuple):
+        # Fallback to old optparse
+        options = options[0]
 
     setup_logger(LOGGER, debug=options.debug, logfile=options.logfile)
     LOGGER.info(

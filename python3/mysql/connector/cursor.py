@@ -1,5 +1,5 @@
 # MySQL Connector/Python - MySQL driver written in Python.
-# Copyright (c) 2009, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2009, 2014, Oracle and/or its affiliates. All rights reserved.
 
 # MySQL Connector/Python is licensed under the terms of the GPLv2
 # <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most
@@ -29,10 +29,17 @@ import re
 
 from mysql.connector import errors
 
-RE_SQL_COMMENT = re.compile(r"\/\*.*\*\/")
-RE_SQL_ON_DUPLICATE = re.compile(r'\s*ON DUPLICATE KEY.*$')
+SQL_COMMENT = r"\/\*.*?\*\/"
+RE_SQL_COMMENT = re.compile(
+    r'''({0})|(["'`][^"'`]*?({0})[^"'`]*?["'`])'''.format(SQL_COMMENT),
+    re.I | re.M | re.S)
+RE_SQL_ON_DUPLICATE = re.compile(
+    r'''\s*ON\s+DUPLICATE\s+KEY(?:[^"'`]*["'`][^"'`]*["'`])*[^"'`]*$''',
+    re.I | re.M | re.S)
+RE_SQL_INSERT_STMT = re.compile(
+    r"({0}|\s)*INSERT({0}|\s)*INTO.+VALUES.*".format(SQL_COMMENT),
+    re.I | re.M | re.S)
 RE_SQL_INSERT_VALUES = re.compile(r'.*VALUES\s*(\(.*\)).*', re.I | re.M | re.S)
-RE_SQL_INSERT_STMT = re.compile(r'INSERT\s+INTO', re.I)
 RE_PY_PARAM = re.compile(b'(%s)')
 RE_SQL_SPLIT_STMTS = re.compile(
     b''';(?=(?:[^"'`]*["'`][^"'`]*["'`])*[^"'`]*$)''')
@@ -481,7 +488,7 @@ class MySQLCursor(CursorBase):
 
         try:
             if not isinstance(operation, bytes):
-                stmt = operation.encode(self._connection.charset)
+                stmt = operation.encode(self._connection.python_charset)
             else:
                 stmt = operation
         except (UnicodeDecodeError, UnicodeEncodeError) as err:
@@ -514,9 +521,22 @@ class MySQLCursor(CursorBase):
             return None
 
     def _batch_insert(self, operation, seq_params):
-        """Implemets multi row insert"""
+        """Implements multi row insert"""
+        def remove_comments(match):
+            """Remove comments from INSERT statements.
+
+            This function is used while removing comments from INSERT
+            statements. If the matched string is a comment not enclosed
+            by quotes, it returns an empty string, else the string itself.
+            """
+            if match.group(1):
+                return ""
+            else:
+                return match.group(2)
+
         tmp = re.sub(RE_SQL_ON_DUPLICATE, '',
-                     re.sub(RE_SQL_COMMENT, '', operation))
+                     re.sub(RE_SQL_COMMENT, remove_comments, operation))
+
         matches = re.search(RE_SQL_INSERT_VALUES, tmp)
         if not matches:
             raise errors.InterfaceError(
@@ -542,8 +562,11 @@ class MySQLCursor(CursorBase):
                     #for p in self._process_params(params):
                     #    tmp = tmp.replace(b'%s',p,1)
                 values.append(tmp)
-            stmt = stmt.replace(fmt, b','.join(values), 1)
-            return self.execute(stmt)
+            if fmt in stmt:
+                stmt = stmt.replace(fmt, b','.join(values), 1)
+                return stmt
+            else:
+                return None
         except (UnicodeDecodeError, UnicodeEncodeError) as err:
             raise errors.ProgrammingError(str(err))
         except errors.Error:
@@ -590,7 +613,9 @@ class MySQLCursor(CursorBase):
             if not seq_params:
                 self._rowcount = 0
                 return
-            return self._batch_insert(operation, seq_params)
+            stmt = self._batch_insert(operation, seq_params)
+            if stmt is not None:
+                return self.execute(stmt)
 
         rowcnt = 0
         try:

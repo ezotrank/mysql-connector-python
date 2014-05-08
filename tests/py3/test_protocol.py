@@ -237,6 +237,10 @@ class MySQLProtocolTests(tests.MySQLConnectorTests):
         res = self._protocol.parse_column_count(packet)
         self.assertEqual(3, res)
 
+        packet = b'\x01\x00'
+        self.assertRaises(errors.InterfaceError,
+                          self._protocol.parse_column_count, packet)
+
     def test_parse_column(self):
         """Parse field-packet sent by MySQL"""
         column_packet = \

@@ -298,8 +298,8 @@ class CharacterSetTests(tests.MySQLConnectorTests):
             'swe7', 'ascii', 'ujis', 'sjis', 'cp1251', 'hebrew', 'tis620',
             'euckr', 'latin7', 'koi8u', 'gb2312', 'greek', 'cp1250', 'gbk',
             'cp1257', 'latin5', 'armscii8', 'utf8', 'ucs2', 'cp866', 'keybcs2',
-            'macce', 'macroman', 'cp852', 'cp1256', 'binary', 'geostd8',
-            'cp932', 'eucjpms'
+            'macce', 'macroman', 'cp852', 'utf8mb4','utf16', 'utf16le',
+            'cp1256', 'utf32', 'binary', 'geostd8', 'cp932', 'eucjpms'
         )
 
         self.assertEqual(exp, constants.CharacterSet.get_supported())
